@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:context="http://www.springframework.org/schema/context"
+    xmlns:mvc="http://www.springframework.org/schema/mvc" xmlns:util="http://www.springframework.org/schema/util"
+    xmlns:tx="http://www.springframework.org/schema/tx"
+    xsi:schemaLocation="http://www.springframework.org/schema/mvc http://www.springframework.org/schema/mvc/spring-mvc-3.0.xsd
+        http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.0.xsd
+        http://www.springframework.org/schema/tx http://www.springframework.org/schema/tx/spring-tx-3.0.xsd
+        http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-3.0.xsd
+        http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util-3.0.xsd">
+
+    <context:annotation-config />
+
+    <context:component-scan base-package="au.com.optus.mcas.sdp.bizservice.ott" />
+
+    <import resource="classpath:/spring/mcas-core-db-jpa-context.xml" />
+
+      <!-- <bean id="springFacade" class="au.com.optus.mcas.sdp.bizservice.ott.ordertracking.batchjob.facade.spring.SpringOrderTrackingFacade" /> -->
+
+    <!-- make properties available as a bean -->
+    <bean id="order_tracking_batch_job" class="au.com.optus.mcas.sdp.bizservice.ott.ordertracking.batchjob.util.OrderTrackingPropertiesContainer">
+        <property name="propertiesFileName" value="${properties.path}/order_tracking_batch_job.properties" />
+    </bean>
+
+    <tx:annotation-driven order="300" transaction-manager="ott_order_tracking-jpaTransactionManager" />
+
+     <bean id="ott_order_tracking-jpaTransactionManager" class="org.springframework.orm.jpa.JpaTransactionManager">
+        <property name="entityManagerFactory" ref="ott_batch-entityManagerFactory" />
+        <qualifier value="ott_order_tracking-jpaTransactionManager"/>
+    </bean>
+
+
+    <util:list id="core-packagesToScan">
+        <value>au.com.optus.mcas.sdp.bizservice.ott.ordertracking.batchjob.model</value>
+    </util:list>
+    <bean id="ordertracking_properties_placeholder"
+        class="org.springframework.beans.factory.config.PropertyPlaceholderConfigurer"
+        lazy-init="false">
+        <property name="location"
+            value="classpath:${properties.path}/order_tracking_batch_job.properties" />
+        <property name="placeholderPrefix" value="$batchordertracking{" />
+        <property name="placeholderSuffix" value="}" />
+    </bean>
+
+
+    <util:properties id="order_tracking_batch_job_properties"
+        location="classpath:${properties.path}/order_tracking_batch_job.properties" />
+    
+    <util:map id="jaxwsCustomProperties">
+        <entry key="com.sun.xml.internal.ws.request.timeout">
+            <value type="java.lang.Integer">$batchordertracking{defaultReadTimeoutForBackendServices}</value>
+        </entry>
+        <entry key="com.sun.xml.internal.ws.connect.timeout">
+            <value type="java.lang.Integer">$batchordertracking{defaultConnectionTimeoutForBackendServices}</value>
+        </entry>
+    </util:map>
+    
+    <!-- Active HornetQJMS Configuration starts -->
+    
+    
+     <bean name="hornetConnectionFactory" class="org.hornetq.jms.client.HornetQJMSConnectionFactory">
+        <constructor-arg name="ha" value="false"></constructor-arg>
+        <constructor-arg>
+            <bean name="transportConfiguration" class="org.hornetq.api.core.TransportConfiguration">
+                <constructor-arg
+                    value="org.hornetq.core.remoting.impl.netty.NettyConnectorFactory" />
+                <constructor-arg>
+                    <map key-type="java.lang.String" value-type="java.lang.Object">
+                        <entry key="host">
+                           <value type="java.lang.String">$batchordertracking{host.name}</value>
+                         </entry>
+                         <entry key="port">
+                           <value type="java.lang.String">$batchordertracking{port.name}</value>
+                         </entry>
+                    </map>
+                </constructor-arg>
+            </bean>
+        </constructor-arg>
+    </bean>
+    
+   <bean id="userCredsConnectionFactory" class="org.springframework.jms.connection.UserCredentialsConnectionFactoryAdapter">
+   <property name="targetConnectionFactory"><ref bean="hornetConnectionFactory"/></property>
+   <property name="username"><value>$batchordertracking{user.name}</value></property>
+   <property name="password"><value>$batchordertracking{pass.name}</value></property>
+   <!-- use credentials of some user you have added in 'jmsrole' group as application
+        user in jboss in the above config -->
+   </bean>
+    
+    <!-- ConnectionFactory Definition -->
+    <bean id="connectionFactory"
+        class="org.springframework.jms.connection.CachingConnectionFactory">
+        <constructor-arg ref="hornetConnectionFactory"/>
+    </bean>
+    
+    <bean id="defaultDestination" class="org.hornetq.jms.client.HornetQQueue">
+        <constructor-arg index="0">
+          <value>$batchordertracking{queue.name}</value>
+        </constructor-arg>
+    </bean>
+    
+    <bean id="producerTemplate" class="org.springframework.jms.core.JmsTemplate">
+        <property name="connectionFactory" ref="connectionFactory" />
+        <property name="defaultDestination" ref="defaultDestination" />
+    </bean>
+    
+    <bean id="messageSender" class="au.com.optus.mcas.sdp.bizservice.ott.ordertracking.batchjob.jms.client.OrderTrackingJmsProducerImpl">
+    <property name="jmsTemplate" ref="producerTemplate"></property>
+    </bean>
+    
+     <!-- Active HornetQJMS Configuration Ends -->
+
+      <bean id="omppublishenablerclient" class="au.com.optus.mcas.sdp.bizservice.ordertracking.service.client.generated.OMPEnablerPublisherService_Service_Impl">
+        <constructor-arg index="0">
+            <value>$batchordertracking{omppublishenabler.service.url}</value>
+        </constructor-arg>
+    </bean>
+
+    <bean id="order_tracking_batch_job-securityHeaderHandlerInfo" class="javax.xml.rpc.handler.HandlerInfo">
+        <property name="handlerConfig">
+            <props>
+                <prop key="CLIENT_ID">$batchordertracking{omppublishenabler.service.username}</prop>
+                <prop key="PASSWORD">$batchordertracking{omppublishenabler.service.password}</prop>
+            </props>
+        </property>
+    </bean>
+
+</beans>
